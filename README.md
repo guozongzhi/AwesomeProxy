@@ -49,7 +49,22 @@ AwesomeProxy 不使用 SQLite 或任何数据库。唯一真实状态源是：
 ~/.awesomeproxy/config.yaml
 ```
 
-前端保存表单后会调用 Tauri Command，Rust Core 将配置序列化为 YAML 并覆写该文件，然后尝试调用本地 LiteLLM reload 接口。
+前端保存表单后会调用 Tauri Command，Rust Core 将配置序列化为 YAML 并覆写该文件，然后尝试调用本地 LiteLLM reload 接口。配置使用 LiteLLM 兼容的 `model_list` 结构，并额外保留 `app_settings` 用于 AwesomeProxy 本地监听地址。
+
+
+默认配置示例：
+
+```yaml
+app_settings:
+  host: 127.0.0.1
+  port: 4000
+model_list:
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: ""
+      api_base: https://api.deepseek.com
+```
 
 ## 🧩 LiteLLM Sidecar
 

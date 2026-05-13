@@ -1,4 +1,4 @@
-import type { AppConfig, ProviderConfig } from '../types';
+import type { AppConfig, ModelConfig } from '../types';
 
 type ConfigFormProps = {
   config: AppConfig;
@@ -7,23 +7,31 @@ type ConfigFormProps = {
   onSubmit: () => void;
 };
 
-export function ConfigForm({ config, saving, onChange, onSubmit }: ConfigFormProps) {
-  const provider = config.providers[0] ?? {
-    name: '',
-    api_key: '',
-    base_url: '',
+const emptyModel: ModelConfig = {
+  model_name: '',
+  litellm_params: {
     model: '',
-  };
+    api_key: '',
+    api_base: '',
+  },
+};
 
-  const updateProvider = (patch: Partial<ProviderConfig>) => {
-    const nextProvider = { ...provider, ...patch };
+export function ConfigForm({ config, saving, onChange, onSubmit }: ConfigFormProps) {
+  const model = config.model_list[0] ?? emptyModel;
+
+  const updateModel = (patch: Partial<ModelConfig>) => {
+    const nextModel = { ...model, ...patch };
     onChange({
       ...config,
-      providers: [nextProvider, ...config.providers.slice(1)],
-      routes: {
-        ...config.routes,
-        default_provider: patch.name ?? config.routes.default_provider,
-        default_model: patch.model ?? config.routes.default_model,
+      model_list: [nextModel, ...config.model_list.slice(1)],
+    });
+  };
+
+  const updateLiteLlmParams = (patch: Partial<ModelConfig['litellm_params']>) => {
+    updateModel({
+      litellm_params: {
+        ...model.litellm_params,
+        ...patch,
       },
     });
   };
@@ -40,15 +48,20 @@ export function ConfigForm({ config, saving, onChange, onSubmit }: ConfigFormPro
         <div>
           <p className="eyebrow">Proxy</p>
           <h2>Local LiteLLM Gateway</h2>
-          <p className="section-copy">AwesomeProxy writes this configuration to ~/.awesomeproxy/config.yaml.</p>
+          <p className="section-copy">
+            AwesomeProxy stores app settings and LiteLLM model routes in ~/.awesomeproxy/config.yaml.
+          </p>
         </div>
         <div className="field-grid two-columns">
           <label>
             Host
             <input
-              value={config.proxy.host}
+              value={config.app_settings.host}
               onChange={(event) =>
-                onChange({ ...config, proxy: { ...config.proxy, host: event.target.value } })
+                onChange({
+                  ...config,
+                  app_settings: { ...config.app_settings, host: event.target.value },
+                })
               }
               placeholder="127.0.0.1"
             />
@@ -59,11 +72,11 @@ export function ConfigForm({ config, saving, onChange, onSubmit }: ConfigFormPro
               type="number"
               min="1"
               max="65535"
-              value={config.proxy.port}
+              value={config.app_settings.port}
               onChange={(event) =>
                 onChange({
                   ...config,
-                  proxy: { ...config.proxy, port: Number(event.target.value) || 4000 },
+                  app_settings: { ...config.app_settings, port: Number(event.target.value) || 4000 },
                 })
               }
             />
@@ -73,38 +86,40 @@ export function ConfigForm({ config, saving, onChange, onSubmit }: ConfigFormPro
 
       <section className="form-section">
         <div>
-          <p className="eyebrow">Provider</p>
+          <p className="eyebrow">LiteLLM</p>
           <h2>Default Model Route</h2>
-          <p className="section-copy">Edit the first provider route. More dynamic providers can be added later.</p>
+          <p className="section-copy">
+            This writes the LiteLLM-compatible model_list entry used by the sidecar.
+          </p>
         </div>
         <div className="field-grid">
           <label>
-            Provider Name
-            <input value={provider.name} onChange={(event) => updateProvider({ name: event.target.value })} />
+            Public Model Name
+            <input value={model.model_name} onChange={(event) => updateModel({ model_name: event.target.value })} />
+          </label>
+          <label>
+            Provider Model
+            <input
+              value={model.litellm_params.model}
+              onChange={(event) => updateLiteLlmParams({ model: event.target.value })}
+              placeholder="deepseek/deepseek-chat"
+            />
           </label>
           <label>
             API Key
             <input
               type="password"
-              value={provider.api_key}
-              onChange={(event) => updateProvider({ api_key: event.target.value })}
+              value={model.litellm_params.api_key}
+              onChange={(event) => updateLiteLlmParams({ api_key: event.target.value })}
               placeholder="sk-..."
             />
           </label>
           <label>
-            Base URL
+            API Base URL
             <input
-              value={provider.base_url}
-              onChange={(event) => updateProvider({ base_url: event.target.value })}
+              value={model.litellm_params.api_base}
+              onChange={(event) => updateLiteLlmParams({ api_base: event.target.value })}
               placeholder="https://api.deepseek.com"
-            />
-          </label>
-          <label>
-            Model
-            <input
-              value={provider.model}
-              onChange={(event) => updateProvider({ model: event.target.value })}
-              placeholder="deepseek-chat"
             />
           </label>
         </div>

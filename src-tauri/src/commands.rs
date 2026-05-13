@@ -3,37 +3,35 @@ use std::{
     fs,
     io::{Read, Write},
     net::TcpStream,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Child,
     sync::Mutex,
     time::Duration,
 };
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct AppConfig {
-    pub proxy: ProxyConfig,
-    pub providers: Vec<ProviderConfig>,
-    pub routes: RouteConfig,
+    pub app_settings: AppSettings,
+    pub model_list: Vec<ModelConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ProxyConfig {
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct AppSettings {
     pub host: String,
     pub port: u16,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ProviderConfig {
-    pub name: String,
-    pub api_key: String,
-    pub base_url: String,
-    pub model: String,
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ModelConfig {
+    pub model_name: String,
+    pub litellm_params: LiteLlmParams,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct RouteConfig {
-    pub default_provider: String,
-    pub default_model: String,
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct LiteLlmParams {
+    pub model: String,
+    pub api_key: String,
+    pub api_base: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -57,20 +55,18 @@ pub struct SidecarState {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            proxy: ProxyConfig {
+            app_settings: AppSettings {
                 host: "127.0.0.1".to_string(),
                 port: 4000,
             },
-            providers: vec![ProviderConfig {
-                name: "deepseek".to_string(),
-                api_key: String::new(),
-                base_url: "https://api.deepseek.com".to_string(),
-                model: "deepseek-chat".to_string(),
+            model_list: vec![ModelConfig {
+                model_name: "deepseek-chat".to_string(),
+                litellm_params: LiteLlmParams {
+                    model: "deepseek/deepseek-chat".to_string(),
+                    api_key: String::new(),
+                    api_base: "https://api.deepseek.com".to_string(),
+                },
             }],
-            routes: RouteConfig {
-                default_provider: "deepseek".to_string(),
-                default_model: "deepseek-chat".to_string(),
-            },
         }
     }
 }
@@ -93,31 +89,40 @@ pub fn ensure_config_file() -> Result<PathBuf, String> {
     Ok(path)
 }
 
-pub fn write_config(config: &AppConfig) -> Result<PathBuf, String> {
-    let directory = config_dir()?;
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("Failed to create config directory: {error}"))?;
+pub fn read_config_from_path(path: &Path) -> Result<AppConfig, String> {
+    let yaml = fs::read_to_string(path)
+        .map_err(|error| format!("Failed to read config file {}: {error}", path.display()))?;
+    serde_yaml::from_str(&yaml)
+        .map_err(|error| format!("Failed to parse config file {}: {error}", path.display()))
+}
 
-    let path = directory.join("config.yaml");
+pub fn write_config_to_path(path: &Path, config: &AppConfig) -> Result<(), String> {
+    if let Some(directory) = path.parent() {
+        fs::create_dir_all(directory)
+            .map_err(|error| format!("Failed to create config directory: {error}"))?;
+    }
+
     let yaml = serde_yaml::to_string(config)
         .map_err(|error| format!("Failed to serialize config to YAML: {error}"))?;
-    fs::write(&path, yaml).map_err(|error| format!("Failed to write config file: {error}"))?;
+    fs::write(path, yaml).map_err(|error| format!("Failed to write config file: {error}"))
+}
+
+pub fn write_config(config: &AppConfig) -> Result<PathBuf, String> {
+    let path = config_path()?;
+    write_config_to_path(&path, config)?;
     Ok(path)
 }
 
 #[tauri::command]
 pub fn read_config() -> Result<AppConfig, String> {
     let path = ensure_config_file()?;
-    let yaml = fs::read_to_string(&path)
-        .map_err(|error| format!("Failed to read config file {}: {error}", path.display()))?;
-    serde_yaml::from_str(&yaml)
-        .map_err(|error| format!("Failed to parse config file {}: {error}", path.display()))
+    read_config_from_path(&path)
 }
 
 #[tauri::command]
 pub fn save_config(config: AppConfig) -> Result<SaveConfigResponse, String> {
     let path = write_config(&config)?;
-    let (reloaded, message) = reload_sidecar(&config.proxy.host, config.proxy.port);
+    let (reloaded, message) = reload_sidecar(&config.app_settings.host, config.app_settings.port);
 
     Ok(SaveConfigResponse {
         config_path: path.display().to_string(),
@@ -181,14 +186,7 @@ fn reload_sidecar(host: &str, port: u16) -> (bool, String) {
 
             let mut response = String::new();
             match stream.read_to_string(&mut response) {
-                Ok(_) if response.contains(" 2") || response.starts_with("HTTP/1.1 200") => (
-                    true,
-                    "Config saved and LiteLLM Sidecar reload was requested".to_string(),
-                ),
-                Ok(_) => (
-                    false,
-                    "Config saved, but LiteLLM Sidecar did not confirm reload".to_string(),
-                ),
+                Ok(_) => reload_message_from_http_response(&response),
                 Err(error) => (
                     false,
                     format!("Config saved, but reload response could not be read: {error}"),
@@ -199,5 +197,76 @@ fn reload_sidecar(host: &str, port: u16) -> (bool, String) {
             false,
             format!("Config saved, but LiteLLM Sidecar reload endpoint is unavailable: {error}"),
         ),
+    }
+}
+
+fn reload_message_from_http_response(response: &str) -> (bool, String) {
+    let status_code = response
+        .lines()
+        .next()
+        .and_then(|status_line| status_line.split_whitespace().nth(1))
+        .and_then(|status_code| status_code.parse::<u16>().ok());
+
+    match status_code {
+        Some(200..=299) => (
+            true,
+            "Config saved and LiteLLM Sidecar reload was requested".to_string(),
+        ),
+        Some(code) => (
+            false,
+            format!("Config saved, but LiteLLM Sidecar reload returned HTTP {code}"),
+        ),
+        None => (
+            false,
+            "Config saved, but LiteLLM Sidecar returned an invalid HTTP response".to_string(),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn default_config_uses_litellm_model_list_shape() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.app_settings.port, 4000);
+        assert_eq!(config.model_list[0].model_name, "deepseek-chat");
+        assert_eq!(
+            config.model_list[0].litellm_params.model,
+            "deepseek/deepseek-chat"
+        );
+    }
+
+    #[test]
+    fn config_round_trips_as_yaml() {
+        let unique_name = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("awesomeproxy-{unique_name}.yaml"));
+        let config = AppConfig::default();
+
+        write_config_to_path(&path, &config).expect("config should be writable");
+        let loaded = read_config_from_path(&path).expect("config should be readable");
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(loaded, config);
+    }
+
+    #[test]
+    fn reload_response_accepts_any_2xx_status() {
+        let (reloaded, _) = reload_message_from_http_response("HTTP/1.1 204 No Content\r\n\r\n");
+        assert!(reloaded);
+    }
+
+    #[test]
+    fn reload_response_rejects_non_2xx_status() {
+        let (reloaded, message) =
+            reload_message_from_http_response("HTTP/1.1 500 Server Error\r\n\r\n");
+        assert!(!reloaded);
+        assert!(message.contains("HTTP 500"));
     }
 }

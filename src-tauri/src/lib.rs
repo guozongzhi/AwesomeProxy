@@ -98,7 +98,7 @@ fn start_sidecar(app: &tauri::App) -> Result<(), String> {
         .arg("--config")
         .arg(config_path)
         .arg("--port")
-        .arg(config.proxy.port.to_string())
+        .arg(config.app_settings.port.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

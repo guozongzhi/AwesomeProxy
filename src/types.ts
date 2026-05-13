@@ -1,20 +1,20 @@
 export type AppConfig = {
-  proxy: {
+  app_settings: {
     host: string;
     port: number;
   };
-  providers: ProviderConfig[];
-  routes: {
-    default_provider: string;
-    default_model: string;
-  };
+  model_list: ModelConfig[];
 };
 
-export type ProviderConfig = {
-  name: string;
-  api_key: string;
-  base_url: string;
+export type ModelConfig = {
+  model_name: string;
+  litellm_params: LiteLlmParams;
+};
+
+export type LiteLlmParams = {
   model: string;
+  api_key: string;
+  api_base: string;
 };
 
 export type SaveConfigResponse = {
