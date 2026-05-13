@@ -1,0 +1,13 @@
+AwesomeProxy - 软件设计说明书 (SDD)⚠️ 致 Code Agent 的重要提示：在进行代码生成和架构设计时，请严格遵循本文件的约束。不得擅自引入 SQLite 或其他数据库；必须使用 YAML 作为唯一状态源；必须将代理引擎作为 Sidecar 运行。1. 系统架构边界AwesomeProxy 采用三层解耦的极简架构：UI 层 (前端): 用户可视化控制面板（基于 React + TailwindCSS）。调度层 (Rust Core): 负责配置文件 I/O 与进程生命周期管理。代理层 (Sidecar): 独立运行的 LiteLLM 进程，负责实际的网络请求与协议转换。2. 核心数据流 (YAML 驱动)系统不使用任何数据库。唯一的真实数据源是本地的 config.yaml（通常位于 ~/.awesomeproxy/config.yaml）。配置更新流程：UI 层用户修改表单（如：更换 DeepSeek API Key）。UI 调用 Tauri Command save_config(new_json).Rust Core 将 JSON 序列化为 YAML，覆写 config.yaml。Rust Core 向 LiteLLM Sidecar 发送热更新信号（或调用 /health/reload），Sidecar 重载配置，代理策略实时生效。3. 模块开发约束3.1 UI 层 (React / Vite)功能: 只包含两个核心视图：状态栏托盘下拉菜单 (Tray Menu) 和主配置窗口 (Settings Window)。状态管理: 读取 Rust 传来的配置对象。UI 应根据 config.yaml 的结构动态渲染表单。样式: 推荐使用 TailwindCSS，保持 macOS 原生深色模式风格。3.2 调度层 (Tauri / Rust)文件监听: 使用 serde_yaml 库处理配置读写。进程守护 (核心业务):应用启动时，使用 tauri::process::Command (或 tauri-plugin-shell) 启动打包好的 litellm-sidecar 二进制文件。严格要求: 必须实现优雅关闭。当 AwesomeProxy 退出时，必须确保杀死 Sidecar 子进程，释放 4000 端口。3.3 代理层 (LiteLLM Sidecar)形态: 通过 PyInstaller 预先编译的单文件二进制（无界面）。行为: 启动命令类似 ./litellm-sidecar --config ~/.awesomeproxy/config.yaml --port 4000。注: Code Agent 在本项目中暂不负责编译此文件，假设该二进制已放置在 src-tauri/binaries/ 目录下。4. 阶段性开发路线 (Roadmap for Code Agent)Phase 1: 基础骨架与托盘初始化 Tauri 项目。实现 macOS Menu Bar 托盘图标及基础下拉菜单。Phase 2: YAML 引擎与配置面板在 Rust 端实现 read_yaml 和 write_yaml 的 Tauri Commands。在前端构建表单，能够将配置变动持久化到本地文件。Phase 3: Sidecar 集成 (最关键)配置 Tauri 的 tauri.conf.json 以打包 Sidecar 资源。在 Rust 端 main.rs 的 setup 钩子中编写子进程拉起逻辑。实现主进程退出时的子进程清理逻辑。5. 预期目录结构AwesomeProxy/
+├── package.json
+├── src/                    # React UI 代码
+│   ├── components/         # 表单与开关组件
+│   └── App.tsx
+├── src-tauri/              # Rust 核心代码
+│   ├── Cargo.toml
+│   ├── tauri.conf.json
+│   ├── binaries/           # 存放 litellm-sidecar 预编译文件
+│   └── src/
+│       ├── main.rs         # 进程与托盘管理
+│       └── commands.rs     # YAML 读写命令
+└── README.md
